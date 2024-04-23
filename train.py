@@ -40,6 +40,7 @@ from disentanglement_via_mechanism_sparsity.universal_logger.logger import Unive
 from disentanglement_via_mechanism_sparsity.metrics import MyMetrics, evaluate_disentanglement, edge_errors
 from disentanglement_via_mechanism_sparsity.plot import plot_matrix, plot_weighted_adjacency_vs_steps
 from disentanglement_via_mechanism_sparsity.data.synthetic import get_ToyManifoldDatasets
+from disentanglement_via_mechanism_sparsity.data.taxi import TaxiDataset
 from disentanglement_via_mechanism_sparsity.model.ilcm_vae import ILCM_VAE
 from disentanglement_via_mechanism_sparsity.model.latent_models_vae import FCGaussianLatentModel
 from disentanglement_via_mechanism_sparsity.optimization import CustomCMP
@@ -70,12 +71,17 @@ def get_dataset(opt):
         train_prop = opt.train_prop
 
     assert opt.n_lag <= 1
-    manifold, transition_model = opt.dataset.split("-")[-1].split("/")
-    datasets = get_ToyManifoldDatasets(manifold, transition_model, split=(train_prop, opt.valid_prop, opt.test_prop),
-                                       z_dim=opt.gt_z_dim, x_dim=opt.gt_x_dim, num_samples=opt.num_samples,
-                                       no_norm=opt.no_norm, rand_g_density=opt.rand_g_density,
-                                       gt_graph_name=opt.gt_graph_name, seed=opt.seed)
-    return datasets
+    # manifold, transition_model = opt.dataset.split("-")[-1].split("/")
+    # datasets = get_ToyManifoldDatasets(manifold, transition_model, split=(train_prop, opt.valid_prop, opt.test_prop),
+    #                                    z_dim=opt.gt_z_dim, x_dim=opt.gt_x_dim, num_samples=opt.num_samples,
+    #                                    no_norm=opt.no_norm, rand_g_density=opt.rand_g_density,
+    #                                    gt_graph_name=opt.gt_graph_name, seed=opt.seed)
+    # return datasets
+
+    dataset = TaxiDataset(opt.dataroot, no_norm=opt.no_norm, seed=opt.seed)
+    train_set, test_set, valid_set = dataset.split(train_prop, opt.valid_prop, opt.test_prop)
+    obs, cont_c, _, _, _ = train_set[0]
+    return (obs.shape[1], ), cont_c.shape[0], 0, [], train_set, valid_set, test_set
 
 
 def get_loader(opt, train_dataset, valid_dataset, test_dataset):
@@ -88,7 +94,7 @@ def get_loader(opt, train_dataset, valid_dataset, test_dataset):
                                   num_workers=opt.n_workers,
                                   drop_last=True)
     return train_loader, valid_loader, test_loader
-clean
+
 
 def build_model(opt, device, image_shape, cont_c_dim, disc_c_dim, disc_c_n_values):
     latent_model = FCGaussianLatentModel(opt.z_max_dim, cont_c_dim, disc_c_dim,
