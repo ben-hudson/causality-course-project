@@ -70,19 +70,35 @@ def get_dataset(opt):
     else:
         train_prop = opt.train_prop
 
+    if 'taxi' in opt.dataset:
+        print('Using taxi dataset')
+
+        import xarray as xr
+
+        data = xr.open_dataset(opt.dataroot)
+        total_samples = len(data.coords['sample'])
+        indices = torch.randperm(total_samples).tolist()
+        split = np.array([train_prop, opt.valid_prop, opt.test_prop])
+        split_indices = (np.cumsum(split)*total_samples).astype(int)
+
+        train_indices = indices[0:split_indices[0]]
+        val_indices =   indices[split_indices[0]:split_indices[1]]
+        test_indices =  indices[split_indices[1]:split_indices[2]]
+
+        train_set = TaxiDataset(data, train_indices)
+        val_set = TaxiDataset(data, val_indices)
+        test_set = TaxiDataset(data, test_indices)
+
+        obs, cont_c, _, _, _ = train_set[0]
+        return (obs.shape[1], ), cont_c.shape[0], 0, [], train_set, val_set, test_set
+
     assert opt.n_lag <= 1
-    # manifold, transition_model = opt.dataset.split("-")[-1].split("/")
-    # datasets = get_ToyManifoldDatasets(manifold, transition_model, split=(train_prop, opt.valid_prop, opt.test_prop),
-    #                                    z_dim=opt.gt_z_dim, x_dim=opt.gt_x_dim, num_samples=opt.num_samples,
-    #                                    no_norm=opt.no_norm, rand_g_density=opt.rand_g_density,
-    #                                    gt_graph_name=opt.gt_graph_name, seed=opt.seed)
-    # return datasets
-
-    dataset = TaxiDataset(opt.dataroot, no_norm=opt.no_norm, seed=opt.seed)
-    train_set, test_set, valid_set = dataset.split(train_prop, opt.valid_prop, opt.test_prop)
-    obs, cont_c, _, _, _ = train_set[0]
-    return (obs.shape[1], ), cont_c.shape[0], 0, [], train_set, valid_set, test_set
-
+    manifold, transition_model = opt.dataset.split("-")[-1].split("/")
+    datasets = get_ToyManifoldDatasets(manifold, transition_model, split=(train_prop, opt.valid_prop, opt.test_prop),
+                                       z_dim=opt.gt_z_dim, x_dim=opt.gt_x_dim, num_samples=opt.num_samples,
+                                       no_norm=opt.no_norm, rand_g_density=opt.rand_g_density,
+                                       gt_graph_name=opt.gt_graph_name, seed=opt.seed)
+    return datasets
 
 def get_loader(opt, train_dataset, valid_dataset, test_dataset):
     train_loader = data.DataLoader(train_dataset, batch_size=opt.batch_size, shuffle=True, num_workers=opt.n_workers,

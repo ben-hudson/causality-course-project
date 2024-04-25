@@ -14,9 +14,10 @@ if __name__ == '__main__':
     parser.add_argument('n_nodes', type=int, help='Number of samples to generate')
     parser.add_argument('n_samples', type=int, help='Number of samples to generate')
     parser.add_argument('save_path', type=pathlib.Path, help='Where to save dataset')
+    parser.add_argument('--perturb_travel_times', action='store_true', help='If set, a capacity change at a node influences travel times to/from that node')
     args = parser.parse_args()
 
-    env = taxi.TaxiEnv(args.n_nodes)
+    env = taxi.TaxiEnv(args.n_nodes, perturb_travel_times=args.perturb_travel_times)
 
     data = {
         'cost': [],

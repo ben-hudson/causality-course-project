@@ -14,8 +14,9 @@ from scipy.stats.qmc import LatinHypercube
 class TaxiEnv(gym.Env):
     metadata = {'render_modes': ['human', 'rgb_array'], 'render_fps': 0.1}
 
-    def __init__(self, num_nodes):
+    def __init__(self, num_nodes, perturb_travel_times=False):
         self.num_nodes = num_nodes
+        self.perturb_travel_times = perturb_travel_times
 
         node_pos = LatinHypercube(2).random(self.num_nodes)
         self.graph = nx.Graph()
@@ -35,7 +36,7 @@ class TaxiEnv(gym.Env):
 
         self.default_cost_mean = np.zeros((self.num_nodes, self.num_nodes))
         for i, j in itertools.combinations(self.graph.nodes, 2):
-            cost = nx.dijkstra_path_length(self.graph, i, j, weight='cost')
+            cost = 10*nx.dijkstra_path_length(self.graph, i, j, weight='cost')
             self.default_cost_mean[i, j] = cost
         self.default_capacity_mean = 5*np.ones(self.num_nodes)
         self.default_demand_mean = 5*np.ones(self.num_nodes)
@@ -102,11 +103,12 @@ class TaxiEnv(gym.Env):
         capacity_mean = self.capacity_mean + action['capacity_perturbation'] # could change this to a "complex function", like sigmoid
         demand_mean = self.demand_mean + action['demand_perturbation']
 
-        # a positive capacity change causes the travel time to/from a node to increase slightly
+        # a positive capacity change causes the travel time to/from a node to increase by 10%
         cost_mean = self.cost_mean.copy()
-        for i, capacity_change in enumerate(action['capacity_perturbation']):
-            cost_mean[i, :] *= (1 + 0.1*capacity_change)
-            cost_mean[:, i] *= (1 + 0.1*capacity_change)
+        if self.perturb_travel_times:
+            for i, capacity_change in enumerate(action['capacity_perturbation']):
+                cost_mean[i, :] *= (1 + 0.1*capacity_change)
+                cost_mean[:, i] *= (1 + 0.1*capacity_change)
 
         self.sample_and_solve_instance(cost_mean, capacity_mean, demand_mean)
 
@@ -135,7 +137,7 @@ class TaxiEnv(gym.Env):
         ax.set_ylim(-0.1, 1.1)
         self._render(ax)
 
-        if self.render_mode == 'human' or self.render_mode is None:
+        if self.render_mode == 'human':
             plt.ion()
             fig.canvas.draw()
             fig.show()
@@ -147,7 +149,7 @@ class TaxiEnv(gym.Env):
             img = data.reshape((int(h), int(w), -1))
             return img
 
-        else:
+        elif self.render_mode is not None:
             raise Exception(f'render_mode={self.render_mode} is not implemented.')
 
     def _render(self, ax):
