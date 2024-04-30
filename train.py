@@ -77,7 +77,7 @@ def get_dataset(opt):
 
         data = xr.open_dataset(opt.dataroot)
         total_samples = len(data.coords['sample'])
-        indices = torch.randperm(total_samples).tolist()
+        indices = np.arange(total_samples).tolist() # dataloader shuffles, we don't need to
         split = np.array([train_prop, opt.valid_prop, opt.test_prop])
         split_indices = (np.cumsum(split)*total_samples).astype(int)
 
@@ -85,9 +85,9 @@ def get_dataset(opt):
         val_indices =   indices[split_indices[0]:split_indices[1]]
         test_indices =  indices[split_indices[1]:split_indices[2]]
 
-        train_set = TaxiDataset(data, train_indices)
-        val_set = TaxiDataset(data, val_indices)
-        test_set = TaxiDataset(data, test_indices)
+        train_set = TaxiDataset(data, indices=train_indices, no_norm=opt.no_norm, include_offsets_in_obs=True)
+        val_set = TaxiDataset(data, indices=val_indices, no_norm=opt.no_norm, include_offsets_in_obs=True)
+        test_set = TaxiDataset(data, indices=test_indices, no_norm=opt.no_norm, include_offsets_in_obs=True)
 
         obs, cont_c, _, _, _ = train_set[0]
         return (obs.shape[1], ), cont_c.shape[0], 0, [], train_set, val_set, test_set

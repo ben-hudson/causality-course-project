@@ -15,6 +15,8 @@ class TaxiEnv(gym.Env):
     metadata = {'render_modes': ['human', 'rgb_array'], 'render_fps': 0.1}
 
     def __init__(self, num_nodes, perturb_travel_times=False):
+        super().__init__()
+
         self.num_nodes = num_nodes
         self.perturb_travel_times = perturb_travel_times
 
@@ -100,12 +102,16 @@ class TaxiEnv(gym.Env):
 
     def step(self, action):
         # right now, actions do not have a lasting effect
-        capacity_mean = self.capacity_mean + action['capacity_perturbation'] # could change this to a "complex function", like sigmoid
-        demand_mean = self.demand_mean + action['demand_perturbation']
+        capacity_perturbation = action['capacity_perturbation']
+        demand_perturbation = action['demand_perturbation']
+
+        capacity_mean = self.capacity_mean + capacity_perturbation
+        demand_mean = self.demand_mean + demand_perturbation
 
         # a positive capacity change causes the travel time to/from a node to increase by 10%
         cost_mean = self.cost_mean.copy()
         if self.perturb_travel_times:
+            raise Exception('Are you sure? You may want to rethink how the travel times are perturbed.')
             for i, capacity_change in enumerate(action['capacity_perturbation']):
                 cost_mean[i, :] *= (1 + 0.1*capacity_change)
                 cost_mean[:, i] *= (1 + 0.1*capacity_change)
