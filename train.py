@@ -40,7 +40,7 @@ from disentanglement_via_mechanism_sparsity.universal_logger.logger import Unive
 from disentanglement_via_mechanism_sparsity.metrics import MyMetrics, evaluate_disentanglement, edge_errors
 from disentanglement_via_mechanism_sparsity.plot import plot_matrix, plot_weighted_adjacency_vs_steps
 from disentanglement_via_mechanism_sparsity.data.synthetic import get_ToyManifoldDatasets
-from disentanglement_via_mechanism_sparsity.data.taxi import TaxiDataset
+from disentanglement_via_mechanism_sparsity.data.taxi.dataset import TaxiDataset
 from disentanglement_via_mechanism_sparsity.model.ilcm_vae import ILCM_VAE
 from disentanglement_via_mechanism_sparsity.model.latent_models_vae import FCGaussianLatentModel
 from disentanglement_via_mechanism_sparsity.optimization import CustomCMP
@@ -75,7 +75,7 @@ def get_dataset(opt):
 
         import xarray as xr
 
-        data = xr.open_dataset(opt.dataroot)
+        data = xr.open_dataset(pathlib.Path(opt.dataroot) / opt.dataset)
         total_samples = len(data.coords['sample'])
         indices = np.arange(total_samples).tolist() # dataloader shuffles, we don't need to
         split = np.array([train_prop, opt.valid_prop, opt.test_prop])
@@ -85,9 +85,12 @@ def get_dataset(opt):
         val_indices =   indices[split_indices[0]:split_indices[1]]
         test_indices =  indices[split_indices[1]:split_indices[2]]
 
-        train_set = TaxiDataset(data, indices=train_indices, no_norm=opt.no_norm, include_offsets_in_obs=True)
-        val_set = TaxiDataset(data, indices=val_indices, no_norm=opt.no_norm, include_offsets_in_obs=True)
-        test_set = TaxiDataset(data, indices=test_indices, no_norm=opt.no_norm, include_offsets_in_obs=True)
+        train_set = TaxiDataset(data, indices=train_indices, no_norm=opt.no_norm, include_latent_cost=opt.include_latent_cost,
+                                include_offsets_in_obs=opt.include_offsets_in_obs)
+        val_set = TaxiDataset(data, indices=val_indices, no_norm=opt.no_norm, include_latent_cost=opt.include_latent_cost,
+                              include_offsets_in_obs=opt.include_offsets_in_obs)
+        test_set = TaxiDataset(data, indices=test_indices, no_norm=opt.no_norm, include_latent_cost=opt.include_latent_cost,
+                               include_offsets_in_obs=opt.include_offsets_in_obs)
 
         obs, cont_c, _, _, _ = train_set[0]
         return (obs.shape[1], ), cont_c.shape[0], 0, [], train_set, val_set, test_set
@@ -774,6 +777,10 @@ def init_exp(args=None):
                         help="no normalization in toy datasets")
     parser.add_argument("--dataroot", type=str, default="./",
                         help="path to dataset")
+    parser.add_argument("--include_latent_cost", action="store_true",
+                        help="taxi dataset: include cost parameters in latents")
+    parser.add_argument("--include_offsets_in_obs", action="store_true",
+                        help="taxi dataset: include unused capacity and unserved demand in observation")
     parser.add_argument("--train_prop", type=float, default=None,
                         help="proportion of all samples used in validation set")
     parser.add_argument("--valid_prop", type=float, default=0.10,
@@ -782,7 +789,7 @@ def init_exp(args=None):
                         help="proportion of all samples used in test set")
     parser.add_argument("--include_invalid", action="store_true",
                         help="proportion of all samples used in test set")
-    parser.add_argument("--n_workers", type=int, default=4,
+    parser.add_argument("--n_workers", type=int, default=2,
                         help="number of data loading workers")
     parser.add_argument("--batch_size", type=int, default=1024,
                         help="batch size used during training")
