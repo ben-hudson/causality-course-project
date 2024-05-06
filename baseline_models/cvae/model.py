@@ -19,7 +19,9 @@ class Encoder(nn.Module):
         hidden = F.silu(self.fc1(x))
         hidden = F.silu(self.fc2(hidden))
         mean = self.fc31(hidden)
-        var = F.softplus(self.fc32(hidden)) + eps # supposed to help with numerical stability
+        # soft plus to make var positive
+        # eps is supposed to help with numerical stability
+        var = F.softplus(self.fc32(hidden)) + eps
         return Normal(mean, var)
 
 class Decoder(nn.Module):
@@ -41,7 +43,7 @@ class CVAE(nn.Module):
         super(CVAE, self).__init__()
         self.prior_net = Encoder(condition_dim, latent_dim, hidden_dim, hidden_dim // 2)
         self.recognition_net = Encoder(obs_dim + condition_dim, latent_dim, hidden_dim, hidden_dim // 2)
-        self.generation_net = Decoder(latent_dim, obs_dim, hidden_dim, hidden_dim // 2)
+        self.generation_net = Decoder(latent_dim, obs_dim, hidden_dim // 2, hidden_dim)
 
     def sample(self, condition):
         # first, get the conditioned latent distribution p(z|x)
@@ -52,16 +54,20 @@ class CVAE(nn.Module):
         obs_hat = self.generation_net(latents)
         return prior, obs_hat
 
-    def forward(self, obs: torch.Tensor, condition: torch.Tensor):
+    def forward(self, obs: torch.Tensor, condition: torch.Tensor, compute_loss: bool = True):
+        # get prior from condition p(z|x), and try to reconstruct observation
         prior, obs_hat = self.sample(condition)
-        # want reconstructed observation to be close to the observation
-        mse = F.mse_loss(obs_hat, obs)
-
         # now, we need to get the posterior q(z|x,y)
         x = torch.cat([obs, condition], dim=1)
         posterior = self.recognition_net(x)
-        # want posterior to be close to the prior
-        kld = kl_divergence(prior, posterior)
 
-        loss = -kld + mse
-        return loss
+        if compute_loss:
+            # want reconstructed observation to be close to the observation
+            mse = F.mse_loss(obs_hat, obs)
+            # want posterior to be close to the prior
+            kld = kl_divergence(prior, posterior)
+            loss = -kld + mse
+            return prior, posterior, obs_hat, mse, kld, loss
+
+        else:
+            return prior, posterior, obs_hat
