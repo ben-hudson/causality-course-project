@@ -1,5 +1,3 @@
-import sys
-import pathlib
 from numbers import Number
 
 import numpy as np
@@ -8,8 +6,6 @@ from torch import distributions as dist
 from torch import nn
 from torch.nn import functional as F
 
-sys.path.insert(0, str(pathlib.Path(__file__).parent.parent.parent.parent.parent.parent))
-from disentanglement_via_mechanism_sparsity.model.nn import MLP as MLP_ilcm
 
 def weights_init(m):
     if isinstance(m, nn.Linear):
@@ -186,7 +182,7 @@ class Bernoulli(Dist):
 
 class iVAE(nn.Module):
     def __init__(self, latent_dim, data_dim, aux_dim, prior=None, decoder=None, encoder=None,
-                 n_layers=3, hidden_dim=50, activation='lrelu', slope=.1, device='cpu', anneal=False, architecture="ivae", learn_decoder_var=False):
+                 n_layers=3, hidden_dim=50, activation='lrelu', slope=.1, device='cpu', anneal=False):
         super().__init__()
 
         self.data_dim = data_dim
@@ -197,8 +193,6 @@ class iVAE(nn.Module):
         self.activation = activation
         self.slope = slope
         self.anneal_params = anneal
-        self.architecture = architecture
-        self.learn_decoder_var = learn_decoder_var
 
         if prior is None:
             self.prior_dist = Normal(device=device)
@@ -216,57 +210,34 @@ class iVAE(nn.Module):
             self.encoder_dist = encoder
 
         # prior_params
-        #self.prior_mean = torch.zeros(1).to(device)
-        #self.logl = MLP(aux_dim, latent_dim, hidden_dim, n_layers, activation=activation, slope=slope, device=device)
-        # SL: it makes no sense to fix the mean of the prior distribution p(z|u)... let's have a net which outputs both the mean and the log_var
-        self.prior_net = MLP_ilcm(aux_dim, 2 * latent_dim, 512, 5, spectral_norm=False, batch_norm=False).to(device)
+        self.prior_mean = torch.zeros(1).to(device)
+        self.logl = MLP(aux_dim, latent_dim, hidden_dim, n_layers, activation=activation, slope=slope, device=device)
+        # decoder params
+        self.f = MLP(latent_dim, data_dim, hidden_dim, n_layers, activation=activation, slope=slope, device=device)
+        self.decoder_var = .01 * torch.ones(1).to(device)
+        # encoder params
+        self.g = MLP(data_dim + aux_dim, latent_dim, hidden_dim, n_layers, activation=activation, slope=slope,
+                     device=device)
+        self.logv = MLP(data_dim + aux_dim, latent_dim, hidden_dim, n_layers, activation=activation, slope=slope,
+                        device=device)
 
-        if self.architecture == "ivae":
-            # decoder params
-            self.f = MLP(latent_dim, data_dim, hidden_dim, n_layers, activation=activation, slope=slope, device=device)
-            #self.decoder_var = .01 * torch.ones(1).to(device)
-            # encoder params
-            self.g = MLP(data_dim + aux_dim, latent_dim, hidden_dim, n_layers, activation=activation, slope=slope,
-                         device=device)
-            self.logv = MLP(data_dim + aux_dim, latent_dim, hidden_dim, n_layers, activation=activation, slope=slope,
-                            device=device)
-
-            self.apply(weights_init)
-
-        elif self.architecture == "ilcm_tabular":
-            # note that the arguments `hidden_dim`, `n_layers`, `activation` and `slope` are bypassed.
-            # decoder params
-            self.f = MLP_ilcm(latent_dim, data_dim, 512, 6, spectral_norm=False, batch_norm=False).to(device)
-            #self.decoder_var = .01 * torch.ones(1).to(device)
-            # encoder params
-            self.g = MLP_ilcm(data_dim + aux_dim, 2 * latent_dim, 512, 6, spectral_norm=False, batch_norm=False).to(device)
-        else:
-            raise NotImplementedError(f"The architecture \"{architecture}\" is not implemented for iVAE.")
-
-        if self.learn_decoder_var:
-            self.x_logvar = torch.nn.Parameter(-10 * torch.ones((1,))).to(device)
-        else:
-            self.x_logvar = -10 * torch.ones(1).to(device)
-
+        self.apply(weights_init)
 
         self._training_hyperparams = [1., 1., 1., 1., 1]
 
     def encoder_params(self, x, u):
         xu = torch.cat((x, u), 1)
-        if self.architecture == "ivae":
-            g = self.g(xu)
-            logv = self.logv(xu)
-        else:
-            g, logv = torch.chunk(self.g(xu), 2, dim=1)
-        return g, logv.exp() + 1e-6
+        g = self.g(xu)
+        logv = self.logv(xu)
+        return g, logv.exp()
 
     def decoder_params(self, s):
         f = self.f(s)
-        return f, self.x_logvar.exp() + 1e-6
+        return f, self.decoder_var
 
     def prior_params(self, u):
-        prior_mean, prior_logvar = torch.chunk(self.prior_net(u), 2, dim=1)
-        return prior_mean, prior_logvar.exp() + 1e-6
+        logl = self.logl(u)
+        return self.prior_mean, logl.exp()
 
     def forward(self, x, u):
         prior_params = self.prior_params(u)
@@ -297,7 +268,7 @@ class iVAE(nn.Module):
 
     def anneal(self, N, max_iter, it):
         thr = int(max_iter / 1.6)
-        a = 0.5 / self.x_logvar.exp().item()
+        a = 0.5 / self.decoder_var.item()
         self._training_hyperparams[-1] = N
         self._training_hyperparams[0] = min(2 * a, a + a * it / thr)
         self._training_hyperparams[1] = max(1, a * .3 * (1 - it / thr))

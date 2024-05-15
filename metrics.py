@@ -12,7 +12,7 @@ from ignite.exceptions import NotComputableError
 # These decorators helps with distributed settings
 from ignite.metrics.metric import sync_all_reduce, reinit__is_reduced
 
-""" 
+"""
 From the doc v4.3:
 
 By default, Metrics are epoch-wise, it means
@@ -119,12 +119,17 @@ def get_z_z_hat(model, data_loader, device, num_samples=int(1e5), opt=None):
                 z_hat = z_hat.view(z_hat.shape[0], -1)
             elif opt.mode == "ivae":
                 # WARNING: not using disc_c (discrete auxiliary information).
+                cont_c = cont_c.to(device)
                 _, encoder_params, _, _ = model(obs, cont_c)
                 z_hat = encoder_params[0]  # extract mean
             elif opt.mode in ["tcvae", "betavae"]:
                 z_hat = model.encode(obs)[1].select(-1, 0)
             elif opt.mode in ["slowvae", "pcl"]:
                 z_hat = model._encode(obs)[:, :model.z_dim]
+            elif opt.mode == "cvae":
+                cont_c = cont_c.to(device)
+                prior, obs_hat = model.sample(cont_c)
+                z_hat = prior.loc
             else:
                 raise NotImplementedError(f"function get_z_z_hat is not implemented for --mode {opt.mode}")
             z_list.append(z)
@@ -275,4 +280,3 @@ def evaluate_disentanglement(model, data_loader, device, opt):
     #np.set_printoptions(formatter={'float': lambda x: "{0:0.3f}".format(x)})
     #print(np.corrcoef(z, rowvar=False))
     return mcc, consistent_r, r, cc, C_hat, C_pattern, perm_mat, z, z_hat, transposed_consistent_r
-

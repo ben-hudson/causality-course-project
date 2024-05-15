@@ -1,19 +1,24 @@
 import argparse
-from collections import namedtuple
+import pathlib
 import numpy as np
+import sys
+# for some reason you have to import comet before torch
+from comet_ml import Experiment
 import torch
 import torch.nn as nn
 
-from comet_ml import Experiment
+from collections import namedtuple
 from ignite.contrib.metrics import GpuInfo
 from ignite.engine import Engine, Events, create_supervised_trainer, create_supervised_evaluator
 from ignite.handlers import Checkpoint, DiskSaver, Timer, TerminateOnNan, TimeLimit
 from ignite.metrics import RunningAverage
 
-from ...metrics import MyMetrics, evaluate_disentanglement, edge_errors
-from ...train import get_loader, get_dataset
-from ...universal_logger.logger import UniversalLogger
-from .model import CVAE
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent.parent))
+from metrics import MyMetrics, evaluate_disentanglement, edge_errors
+from train import get_loader, get_dataset
+from universal_logger.logger import UniversalLogger
+from baseline_models.cvae.model import CVAE
+from baseline_models.icebeem.models.ivae.ivae_core import iVAE
 
 StepOutput = namedtuple("StepOutput", "obs obs_hat mse kld loss")
 
@@ -36,9 +41,15 @@ def train(args):
     image_shape, cont_c_dim, disc_c_dim, disc_c_n_values, train_dataset, valid_dataset, test_dataset = get_dataset(args)
     train_loader, val_loader, test_loader = get_loader(args, train_dataset, valid_dataset, test_dataset)
 
-    model = CVAE(image_shape, cont_c_dim, args.z_dim, args.hidden_dim)
+    if args.mode == 'cvae':
+        model = CVAE(image_shape[0], cont_c_dim, args.z_dim, args.hidden_dim)
+        model.to(device)
+    elif args.mode == 'ivae':
+        model = iVAE(args.z_dim, image_shape[0], cont_c_dim, hidden_dim=args.hidden_dim, device=device)
+    else:
+        raise Exception(f'mode={args.mode} unknown')
 
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.8)
+    optimizer = torch.optim.SGD(model.parameters(), lr=5e-4, momentum=8e-3)
 
     def loss_fn(something):
         return something
@@ -48,22 +59,38 @@ def train(args):
         optimizer.zero_grad()
 
         obs, cond, _, _, _ = batch
-        obs, cond = obs.to(device), cond.to(device)
+        obs, cond = obs.squeeze().to(device), cond.to(device)
 
-        prior, posterior, obs_hat, mse, kld, loss = model(obs, cond)
-
-        loss.backward()
+        if args.mode == 'cvae':
+            prior, posterior, obs_hat, mse, kld, loss = model(obs, cond)
+            loss = 0.001*kld + mse
+            loss.backward()
+            info = {
+                'Loss': loss.cpu().item(),
+                'KLD': kld.cpu().item(),
+                'MSE': mse.cpu().item()
+            }
+        elif args.mode == 'ivae':
+            elbo, z_est = model.elbo(obs, cond)
+            elbo.mul(-1).backward()
+            info = {
+                'ELBO': elbo.cpu().item(),
+            }
         optimizer.step()
 
-        return StepOutput(obs.cpu(), obs_hat.cpu(), mse.cpu().item(), kld.cpu().item(), loss.cpu().item())
+        return info
 
     trainer = Engine(step)
 
     trainer.add_event_handler(Events.ITERATION_COMPLETED, TerminateOnNan())
 
+    if device != "cpu":
+        GpuInfo().attach(trainer, name='gpu')  # metric names are 'gpu:X mem(%)', 'gpu:X util(%)'
+
     @trainer.on(Events.ITERATION_COMPLETED(every=100))
     def log_training_loss(trainer):
-        print(f"Epoch[{trainer.state.epoch}] Loss: {trainer.state.output.loss:.2f}")
+        for key, value in trainer.state.output.items():
+            print(f"Epoch[{trainer.state.epoch}] {key}: {value:.2f}")
 
     def evaluate_and_log_metrics(model, loader, name, it, logger, device, args):
         model.eval()
@@ -99,7 +126,8 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--hidden_dim', type=int, default=64, help='Max hidden dim for CVAE')
-    parser.add_argument('--mode', choices=['vae'], default='vae', help='For compatibility')
+    parser.add_argument('--z_dim', type=int, default=10, help='Latent dim for CVAE')
+    parser.add_argument('mode', choices=['cvae', 'ivae'], help='For compatibility')
 
     parser.add_argument("--dataset", type=str, required=True,
                         help="Type of the dataset to be used. 'toy-MANIFOLD/TRANSITION_MODEL'")
@@ -111,6 +139,8 @@ if __name__ == '__main__':
                         help="taxi dataset: include cost parameters in latents")
     parser.add_argument("--include_offsets_in_obs", action="store_true",
                         help="taxi dataset: include unused capacity and unserved demand in observation")
+    parser.add_argument("--train_prop", type=float, default=None,
+                        help="proportion of all samples used in validation set")
     parser.add_argument("--valid_prop", type=float, default=0.10,
                         help="proportion of all samples used in validation set")
     parser.add_argument("--test_prop", type=float, default=0.10,

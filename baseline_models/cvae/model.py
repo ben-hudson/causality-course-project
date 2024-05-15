@@ -11,18 +11,19 @@ class Encoder(nn.Module):
         super().__init__()
         self.fc1 = nn.Linear(input_dim, hidden_dim_1)
         self.fc2 = nn.Linear(hidden_dim_1, hidden_dim_2)
+
         # different layers for mean and var
         self.fc31 = nn.Linear(hidden_dim_2, latent_dim)
         self.fc32 = nn.Linear(hidden_dim_2, latent_dim)
 
-    def forward(self, x, eps: float = 1e-8):
+    def forward(self, x: torch.Tensor, eps: float = 1e-8):
         hidden = F.silu(self.fc1(x))
         hidden = F.silu(self.fc2(hidden))
         mean = self.fc31(hidden)
         # soft plus to make var positive
         # eps is supposed to help with numerical stability
-        var = F.softplus(self.fc32(hidden)) + eps
-        return Normal(mean, var)
+        logvar = F.softplus(self.fc32(hidden)) + eps
+        return Normal(loc=mean, scale=torch.exp(logvar))
 
 class Decoder(nn.Module):
     def __init__(self, input_dim, obs_dim, hidden_dim_1, hidden_dim_2):
@@ -63,10 +64,10 @@ class CVAE(nn.Module):
 
         if compute_loss:
             # want reconstructed observation to be close to the observation
-            mse = F.mse_loss(obs_hat, obs)
+            mse = F.mse_loss(obs_hat, obs).sum()
             # want posterior to be close to the prior
-            kld = kl_divergence(prior, posterior)
-            loss = -kld + mse
+            kld = kl_divergence(prior, posterior).sum()
+            loss = kld + mse
             return prior, posterior, obs_hat, mse, kld, loss
 
         else:
